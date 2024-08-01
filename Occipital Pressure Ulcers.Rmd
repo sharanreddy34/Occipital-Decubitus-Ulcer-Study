@@ -1,0 +1,623 @@
+---
+#title: "Occipital Pressure Ulcer Analysis"
+---
+
+After filtering the NIS dataset down to only those who have been diagnosed with one of the ICD-10 codes corresponding to occipital pressure ulcers (the I10_DX[NUM] variables), further analysis is now ready.
+
+I recoded the categorical variables to be factors in an effort to make things easier to interpret.
+
+The data is restricted to only those patients who have been diagnosed with an occipital pressure ulcer at least once.  
+
+```{r setup-packages-data, include = FALSE}
+# Setting global options
+knitr::opts_chunk$set(echo = TRUE,
+                      include = TRUE,
+                      results = "hide",
+                      error = F,
+                      warning = F,
+                      message = F)
+
+if(!require(pacman)) install.packages("pacman")
+
+# General Packages
+pacman::p_load(dplyr, tidyr, readr,
+               ggplot2, GGally)
+
+# Logistic Regression Packages
+pacman::p_load(rsample, pscl, car,
+               InformationValue)
+
+
+
+nis <- read_csv("opu.csv")
+
+# adding in unique patient ID numbers
+nis <- nis %>% 
+  mutate(ID = 1:nrow(nis))
+
+```
+
+
+
+# EDA
+
+We are interested in finding the distribution of the patients who have been diagnosed with occipital pressure ulcers, so initial EDA will be performed on the dataset. First, let's see how many people were diagnosed with occipital pressure ulcers:
+
+```{r counts, echo = FALSE, results = "show"}
+
+cat("Number of observations:", nrow(nis))
+
+```
+As we can see, there are `r nrow(nis)` people who were diagnosed with any stage of the ulcer at least one time.
+
+How many are in any given stage?
+
+```{r pivot-stages, echo = FALSE, results = "show"}
+
+# The names of the ulcer codes
+ulcer_codes <- c("L89810",
+                 "L89811",
+                 "L89812",
+                 "L89813",
+                 "L89814",
+                 "L89819")
+
+stages <- c("unstageable",
+            "stage 1",
+            "stage 2",
+            "stage 3",
+            "stage 4",
+            "unspecified")
+
+
+# The column numbers for the diagnosis number columns
+icd10_cols <- which(startsWith(colnames(nis), "I10_DX"))
+print(icd10_cols)
+
+# The nis data in a 'long' format
+nis_long <- nis %>% 
+  pivot_longer(cols = icd10_cols,
+               names_to = "DIAGNOSIS_NUM",
+               values_to = "STAGE")
+print(nis_long)
+
+knitr::kable(nis_long %>% 
+               filter(STAGE %in% ulcer_codes) %>% 
+               count(STAGE) %>% 
+               rename("NUMBER OF OBS" = n) %>% 
+               mutate(STAGE = stages,
+                      PERCENT = (`NUMBER OF OBS` / sum(`NUMBER OF OBS`)) * 100),
+             caption = "occipital pressure Ulcers by Stage")
+
+```
+
+What are the counts by Sex? Race? (note that Native Americans are pooled in with "other" due to a small sample size)
+
+```{r sex, echo = FALSE, results = "show"}
+
+# Gender
+# filter out for only the condition of interest,
+# rename some variables, then recode the dummy
+# variable to text
+knitr::kable(nis_long %>% 
+               filter(STAGE %in% ulcer_codes) %>% 
+               count(FEMALE) %>% 
+               rename("NUMBER OF OBS" = n,
+                      "SEX" = FEMALE) %>% 
+               mutate(SEX = as.character(SEX),
+                      SEX = ifelse(SEX == "0", "Male", "Female"),
+                      PERCENT = (`NUMBER OF OBS` / sum(`NUMBER OF OBS`)) * 100),
+             caption = "occipital pressure Ulcers by Sex")
+
+```
+
+
+
+```{r race, echo = FALSE,  results = "show"}
+# Race
+knitr::kable(nis_long %>% 
+  filter(STAGE %in% ulcer_codes) %>%
+  mutate(RACE = as.character(RACE),
+         RACE = case_when(
+           RACE == "1" ~ "White",
+           RACE == "2" ~ "Black",
+           RACE == "3" ~ "Hispanic",
+           RACE == "4" ~ "Asian",
+           RACE == "5" ~ "Other",
+           RACE == "6" ~ "Other",
+           TRUE ~ "unknown")) %>% 
+  count(RACE) %>% 
+  mutate(PERCENT = (n / sum(n)) * 100) %>% 
+  rename("NUMBER OF OBS" = n) %>% 
+  arrange(desc(PERCENT)))
+
+```
+
+
+
+
+
+```{r simplification, echo = FALSE}
+
+# All I am doing here is changing dummy variables from integer types to factors
+# in an effort to make the output more readable.
+
+
+# Making RACE a factor and assigning
+# the values factors
+
+# Renaming FEMALE to SEX, changing
+# the values to factors, and
+# assigning character representations
+# of the categories
+
+# Making the AMONTH variable a factor,
+# assigning the month name to its
+# corresponding number,
+# and adding a SEASON variable
+
+# Making PAY1 a factor,
+# assigning the pay method
+# to the corresponding number
+
+# Making TRAN_IN a factor,
+# assigning transfer type
+# to the corresponding number
+
+# Making TRAN_OUT a factor,
+# assigning transfer type to
+# the corresponding number
+
+# Making ZIPINC_QRTL a factor,
+# assigning a character
+# representation of the
+# categories
+
+# Making PL_NCHS a factor,
+# assigning a character
+# representation of the
+# categories
+
+# Making AWEEKEND a factor,
+# assigning a character
+# representation of the
+# categories
+
+# Making HCUP_ED a factor
+
+# Making DIED a factor,
+# assigning a character
+# representation of the
+# categories
+
+nis_long <- nis_long %>% 
+  rename("SEX" = FEMALE) %>% 
+  mutate(RACE = case_when(
+    RACE == "1" ~ "Wht",
+    RACE == "2" ~ "Blk",
+    RACE == "3" ~ "Hisp",
+    RACE == "4" ~ "Asn",
+    RACE == "5" ~ "Oth",
+    RACE == "6" ~ "Oth",
+    TRUE ~ "unknown"),
+    RACE = as.factor(RACE),
+    SEX = case_when(SEX == "0" ~ "M", 
+                    SEX == "1" ~ "F",
+                    TRUE ~ "unknown"),
+    SEX = as.factor(SEX),
+    AMONTH = case_when(
+      AMONTH == "1" ~ "Jan",
+      AMONTH == "2" ~ "Feb",
+      AMONTH == "3" ~ "Mar",
+      AMONTH == "4" ~ "Apr",
+      AMONTH == "5" ~ "May",
+      AMONTH == "6" ~ "Jun",
+      AMONTH == "7" ~ "Jul",
+      AMONTH == "8" ~ "Aug",
+      AMONTH == "9" ~ "Sep",
+      AMONTH == "10" ~ "Oct",
+      AMONTH == "11" ~ "Nov",
+      AMONTH == "12" ~ "Dec",
+      TRUE ~ "unknown"
+    ),
+    AMONTH = as.factor(AMONTH),
+    SEASON = case_when(
+      AMONTH %in% c("Dec", "Jan", "Feb") ~ "Winter",
+      AMONTH %in% c("Mar", "Apr", "May") ~ "Spring",
+      AMONTH %in% c("Jun", "Jul", "Aug") ~ "Summer",
+      AMONTH %in% c("Sep", "Oct", "Nov") ~ "Fall",
+      TRUE ~ "unknown"
+    ),
+    SEASON = as.factor(SEASON),
+    PAY1 = case_when(
+      PAY1 == "1" ~ "Medicare",
+      PAY1 == "2" ~ "Medicaid",
+      PAY1 == "3" ~ "Private",
+      PAY1 == "4" ~ "Pocket",
+      PAY1 == "5" ~ "Free",
+      PAY1 == "6" ~ "Other",
+      TRUE ~ "unknown"
+    ),
+    PAY1 = as.factor(PAY1),
+    TRAN_IN = case_when(
+      TRAN_IN == "0" ~ "not_transferred_in",
+      TRAN_IN == "1" ~ "from_acute_care_hosptial",
+      TRAN_IN == "2" ~ "from_other_health_facility",
+      TRUE ~ "unknown"
+    ),
+    TRAN_IN = as.factor(TRAN_IN),
+    TRAN_OUT = case_when(
+      TRAN_OUT == "0" ~ "not_transferred_out",
+      TRAN_OUT == "0" ~ "to_acute_care_hospital",
+      TRAN_OUT == "0" ~ "to_other_health_facility",
+      TRUE ~ "unknown"
+    ),
+    TRAN_OUT = as.factor(TRAN_OUT),
+    ZIPINC_QRTL = case_when(
+      ZIPINC_QRTL == "1" ~ "bottom 50",
+      ZIPINC_QRTL == "2" ~ "bottom 50",
+      ZIPINC_QRTL == "3" ~ "top 50",
+      ZIPINC_QRTL == "4" ~ "top 50",
+      TRUE ~ "unknown"
+    ),
+    ZIPINC_QRTL = as.factor(ZIPINC_QRTL),
+    PL_NCHS = case_when(
+      PL_NCHS == "1" ~ "Central>=1million",
+      PL_NCHS == "2" ~ "Fringe>=1million",
+      PL_NCHS == "3" ~ "250-1million",
+      PL_NCHS == "4" ~ "50k-249999",
+      PL_NCHS == "5" ~ "micropolitan",
+      PL_NCHS == "6" ~ "non-metro",
+      TRUE ~ "unknown"
+    ),
+    PL_NCHS = as.factor(PL_NCHS),
+    AWEEKEND = case_when(
+      AWEEKEND == "0" ~ "weekday",
+      AWEEKEND == "1" ~ "weekend",
+      TRUE ~ "unknown"
+    ),
+    AWEEKEND = as.factor(AWEEKEND),
+    HCUP_ED = as.factor(HCUP_ED),   # I couldn't come up with a better way to recode HCUP_ED
+    DIED = case_when(
+      DIED == "0" ~ "survived",
+      DIED == "1" ~ "died",
+      TRUE ~ "unknown"
+    ),
+    DIED = as.factor(DIED)
+  )#end of mutate() call
+
+```
+
+
+
+How many people do not have another condition?
+
+```{r only occipital pressure ulcer, echo = FALSE, results = "show"}
+
+cat("Number of people who do not have another condition:",
+    nis_long %>% 
+  filter(!STAGE %in% ulcer_codes) %>% 
+  group_by(ID) %>% 
+  mutate(HAS_OTHER_CONDITION = ifelse(any(!is.na(STAGE)), TRUE, FALSE)) %>% 
+  summarize(t = any(sum(HAS_OTHER_CONDITION) != 39)) %>%
+  summarize(sum(t)) %>% 
+  unlist() %>% 
+  unname()
+)
+```
+
+
+
+Let's break things down by stage...
+
+The percent of occurrences by sex:
+
+```{r sex combo, echo = FALSE, results = "show"}
+
+# Gender
+nis_long %>%  
+  filter(STAGE %in% ulcer_codes) %>%
+  count(STAGE, SEX) %>% 
+  rename("NUMBER OF OBS" = n) %>% 
+  mutate(STAGE = rep(stages, each = 3),
+         PERCENT = (`NUMBER OF OBS` / sum(`NUMBER OF OBS`)) * 100) %>% 
+  ggplot() +
+  geom_col(mapping = aes(x = STAGE, y = PERCENT, fill = SEX),
+           position = "dodge") +
+  ggtitle("Proportions of occipital pressure Ulcers by Condition and Sex") +
+  xlab("Stage") +
+  ylab("Percent of Occurrences") +
+  scale_fill_manual(values = c("pink", "blue", "red")) +
+  theme_dark()
+
+```
+
+
+
+And now race:
+
+```{r race combo, echo = FALSE, results = "show", fig.width = 15}
+
+nis_long %>% 
+  filter(STAGE %in% ulcer_codes) %>%
+  count(STAGE, RACE) %>% 
+  mutate(STAGE = rep(stages, each = 6)) %>% 
+  ungroup() %>% 
+  group_by(RACE) %>%
+  mutate(n = (n / n[1]) * 100) %>% # MAKING AN INDEX
+  ggplot() +
+  geom_col(mapping = aes(x = STAGE, y = n, fill = RACE),
+           position = "dodge", show.legend = FALSE) +
+  facet_wrap(~ RACE) +
+  ggtitle("Occurrences of occipital pressure Ulcers by Condition and Race") +
+  xlab("Stage") +
+  ylab("Number of Occurrences (index)") +
+  coord_flip() +
+  theme_dark()
+
+```
+
+
+
+The number of occurrences were put on an index to more easily compare between groups. The index allows us to ignore differences in absolute numbers (i.e., there are more white patients in the country, so of course they will have more occurrences. As we can see, most differences between races are noticeable but not extreme. Remember this, as it is going to come up again in a few moments.
+
+Now, let's see how diagnoses of occipital pressure ulcers change over time. Is the diagnosis of an occipital pressure ulcer seasonal?
+
+```{r season, results = "show"}
+
+nis_long %>% 
+  filter(STAGE %in% ulcer_codes,
+         AMONTH != "unknown") %>% 
+  count(AMONTH, SEASON) %>%
+  ggplot() +
+  geom_col(mapping = aes(x = AMONTH, y = n, fill = SEASON), show.legend = F) +
+  facet_wrap(~ SEASON, scales = "free_x") +
+  ggtitle("Instances of occipital pressure Ulcers by Season") +
+  xlab("Month") +
+  ylab("Number of Diagnoses") +
+  theme_dark()
+
+
+
+```
+
+
+
+Diagnosis of occipital pressure ulcers does not seem to have a seasonal component. Let's see how a combination of variables relate to one another.
+
+```{r ggpairs, echo = FALSE, results = "show", fig.height = 20, fig.width = 22}
+
+ggpairs_data <- nis_long %>% 
+  filter(STAGE %in% ulcer_codes) %>% 
+  select(-c(AMONTH,
+            I10_PR1:I10_PR25,
+            TRAN_IN:TRAN_OUT,
+            PL_NCHS,
+            YEAR,
+            DIAGNOSIS_NUM,
+            STAGE))
+
+suppressWarnings(
+  ggpairs_data %>% 
+    select(-c(SEASON, ZIPINC_QRTL, PAY1, HCUP_ED)) %>% 
+    ggpairs()
+)
+```
+
+
+
+# Logistic Regression
+
+## Packages and Engine
+
+The rsample package will be used to pull samples with stratified sampling. The stats package's glm() function will be the engine through which the logistic regression will run. The pscl package's pR2() function will be used to calculate McFadden's R-squared. To check for multicollinearity, the car package will be used to calculate the variance inflation factor (VIF). To create the ROC curve and confusion matrices, the InformationValue package will be used.
+
+
+## Sampling
+
+I did the cleaning in the EDA section and with Spark, so we can jump straight into sampling. Stratification on the RACE variable will be pursued.
+
+```{r sampling}
+# stratified sampling by RACE
+# 80 percent in train, 20 percent in test
+
+# setting the random number generator
+set.seed(2021)
+nis_split <- rsample::initial_split(nis_long %>% 
+                                      mutate(DIED = as.character(DIED)) %>% 
+                                      filter(!is.na(DIED),
+                                             STAGE %in% ulcer_codes,
+                                             DIED != "unknown") %>% 
+                                      mutate(DIED = as.factor(DIED)),
+                                    prob = 0.8,
+                                    strata = "RACE")
+
+# Splitting into training and test sets
+nis_train <- rsample::training(nis_split)
+nis_test <- rsample::testing(nis_split)
+
+```
+
+
+
+
+
+
+## Models
+
+I will try several different logistic regression models on the data.
+
+```{r models}
+
+logit1 <- glm(data = nis_train,
+              formula = DIED ~ A_AGE + SEX + RACE + LOS,
+              family = "binomial")
+
+logit2 <- glm(data = nis_train,
+              formula = DIED ~ SEASON + ZIPINC_QRTL + HCUP_ED + I10_NPR,
+              family = "binomial")
+
+```
+
+
+## Evaluation
+
+### Summaries
+The results from 'logit1' are as follows:
+
+```{r summary logit1, echo = FALSE, results = "show"}
+
+summary(logit1)
+
+```
+
+Only age and length of stay are significant. Interestingly, the demographic variables are not significant.
+
+The results from 'logit2' are as follows:
+
+```{r summary logit2, echo = FALSE, results = "show"}
+
+summary(logit2)
+
+```
+
+The Emergency Department codes, along with some of the Emergency Department codes, are significant.
+
+One of the most important things I learned about modeling is that proving something is only marginally helpful--disproving is powerful. I think we may be able to rule out a seasonal component to instances of occipital pressure ulcers in hospital patients. Similarly, income levels--broken down into two groups [bottom 50th percentile, top 50th percentile]--are not significant. Income levels do not improve the survival rate of occipital pressure ulcers.
+
+
+### McFadden's R-square
+
+We can calculate McFadden's pseudo R-squared for each model to evaluate the goodness of fit. In general, a pseudo R-squared greater than 0.4 indicates a good fit.
+
+Let's begin with 'logit1':
+```{r pR2 logit1, echo = FALSE, results = "show"}
+
+cat(pscl::pR2(logit1)["McFadden"])
+
+```
+
+'logit2'?
+```{r pR2 logit2, echo = FALSE, results = "show"}
+
+cat(pscl::pR2(logit2)["McFadden"])
+
+```
+
+
+These models perform poorly... Let's check the VIF scores. Maybe multicollinearity is an issue?
+
+### Variance Inflation Factor
+
+We can calculate the VIF of each predictor to see if multicollinearity is a problem. VIF scores range from 1 to infinity. A score of 1 indicates zero multicollinearity and scores greater than 5 indicate multicollinearity is an issue that needs to be addressed.
+
+```{r VIF logit1, echo = FALSE, results = "show"}
+
+car::vif(logit1)
+
+```
+
+Excellent, the addition of new variables has little effect on the significance of the predictors.
+
+'logit2'?
+```{r VIF logit2, echo = FALSE, results = "show"}
+
+car::vif(logit2)
+
+```
+
+
+multicollinearity does not seem to be an issue with the second logistic regression.
+
+
+### Test Data
+
+Finally, let's check the model's accuracy on the test sets. First the probabilities will need to be calculated for each variable.
+```{r probabilities}
+
+logit1_test_probs <- predict(logit1,
+                             nis_test,
+                             type = "response")
+
+logit2_test_probs <- predict(logit2,
+                             nis_test,
+                             type = "response")
+
+```
+
+We can make a confusion matrix to find the sensitivity and specificity. The threshold for determining whether someone dies is 0.5--anyone with a probability >= 0.5 is classified as dead and alive otherwise.
+
+The confusion matrix for 'logit1':
+```{r confusion matrix logit1, echo = FALSE, results = "show"}
+
+InformationValue::confusionMatrix(nis_test$DIED, logit1_test_probs, threshold = 0.5)
+
+```
+
+
+
+The confusion matrix for 'logit2':
+```{r confusion matrix logit2, echo = FALSE, results = "show"}
+
+InformationValue::confusionMatrix(nis_test$DIED, logit2_test_probs, threshold = 0.50)
+
+```
+
+
+
+Neither of the models have any misclassifications. In case you missed it, missing values (where there was no 'DIED' value provided) were omitted from analysis. Since there are few significant variables, much of these predictions are likely due to overfitting.
+
+### ROC Curves
+
+The ROC curve for 'logit1':
+
+```{r roc curve (logit1), echo = FALSE, results = "show"}
+# A logical vector stating whether the patient survived the visit
+survived <- ifelse(nis_test$DIED == "survived", FALSE, TRUE)
+
+# The ROC curve plot
+InformationValue::plotROC(survived, logit1_test_probs)
+
+```
+
+The ROC curve for 'logit2':
+
+```{r roc curve (logit2), echo = FALSE, results = "show"}
+
+# The ROC curve plot
+InformationValue::plotROC(survived, logit2_test_probs)
+
+```
+
+
+## Optimization
+
+Clearly, the two previous models were not nearly sufficient to prove anything, although they allowed us to disprove some important ideas--namely that there is a statistically significant difference between the survival rate between different racial groups, although different races are not diagnosed with different stages of occipital pressure ulcers uniformly.
+
+
+The following model includes only significant variables:
+
+```{r new model, echo = TRUE, results = "show"}
+
+logit3 <- glm(data = nis_train,
+              formula = DIED ~ A_AGE + I10_NPR + TOTCHG,
+              family = "binomial")
+
+summary(logit3)
+car::vif(logit3)
+cat(pscl::pR2(logit3)["McFadden"])
+
+logit3_test_probs <- predict(logit3,
+                             nis_test,
+                             type = "response")
+InformationValue::confusionMatrix(nis_test$DIED, logit3_test_probs, threshold = 0.5)
+
+InformationValue::plotROC(survived, logit3_test_probs)
+
+```
+
+
+Perhaps there is something else that can be done, but I am unsure of what to try. Interaction terms, transformation of the numerical variables, and creation of related variables (such as 'SEASON') were all tried. The pseudo R-squared and ROC curves are not very promising.
+
+
+_Insignificant variables: PAY1, AMONTH, AWEEKEND, SEX, PL_NCHS, STAGE, ZIPINC_QRTL, TRAN_IN, TRAN_OUT, YEAR, DIAGNOSIS_NUM, SEASON, RACE._
